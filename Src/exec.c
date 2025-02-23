@@ -1334,22 +1334,22 @@ execode(Eprog p, int dont_change_job, int exiting, char *context)
 }
 
  
- /**
-  * Intercepts all external commands and processes `--ai` flag.
-  */
- static int bin_exec(char *name, char **argv, Options ops, int func) {
+/**
+ * Intercepts all external commands and processes Valthera flags.
+ */
+static int bin_exec(char *name, char **argv, Options ops, int func) {
     printf("[DEBUG] bin_exec() called for command: %s\n", name);
     
     int has_ai_flag = 0;
     char command_output[8192] = "";
     char command_str[1024] = "";
 
-    // Check if `--ai` is present
+    // Check if `-val` or `--valthera` is present
     for (int i = 0; argv[i]; i++) {
         printf("[DEBUG] Argument: %s\n", argv[i]);
-        if (strcmp(argv[i], "--ai") == 0) {
+        if (strcmp(argv[i], "-val") == 0 || strcmp(argv[i], "--valthera") == 0) {
             has_ai_flag = 1;
-            argv[i] = NULL;  // Remove `--ai` from the command
+            argv[i] = NULL;  // Remove the flag from the command
         } else {
             strcat(command_str, argv[i]);  // Append valid arguments
             strcat(command_str, " ");
@@ -1359,9 +1359,9 @@ execode(Eprog p, int dont_change_job, int exiting, char *context)
     // Run the actual command
     int ret = execve(name, argv, environ);
 
-    // If --ai was used, capture and process output
+    // If Valthera flag was used, capture and process output
     if (has_ai_flag) {
-        printf("[DEBUG] AI Mode Activated\n");
+        printf("[DEBUG] Valthera Mode Activated\n");
         FILE *fp = popen(command_str, "r");  // Run command and capture output
         if (fp) {
             fread(command_output, 1, sizeof(command_output) - 1, fp);
@@ -1373,7 +1373,7 @@ execode(Eprog p, int dont_change_job, int exiting, char *context)
     return ret;
 }
 
- 
+
  /**
   * Executes simple commands (internal to Zsh).
   */
@@ -3000,7 +3000,7 @@ static void
 execcmd_exec(Estate state, Execcmd_params eparams,
              int input, int output, int how, int last1, int close_if_forked)
 {
-    if (eparams->args && nonempty(eparams->args)) {
+	if (eparams->args && nonempty(eparams->args)) {
         char *cmd = (char *)getdata(firstnode(eparams->args));
         int arg_count = countlinknodes(eparams->args);
         char **args = (char **)hcalloc((arg_count + 1) * sizeof(char *));
@@ -3010,21 +3010,22 @@ execcmd_exec(Estate state, Execcmd_params eparams,
 
         fprintf(stderr, "[DEBUG] execcmd_exec() called for command: %s\n", cmd);
 
-        // First pass: check for --ai flag and build args
+        // First pass: check for -val or --valthera flags and build args
         for (node = firstnode(eparams->args); node; incnode(node)) {
             char *arg = (char *)getdata(node);
             untokenize(arg);
             
-            if (strcmp(arg, "--ai") == 0) {
+            // Check for Valthera-specific flags
+            if (strcmp(arg, "-val") == 0 || strcmp(arg, "--valthera") == 0) {
                 has_ai_flag = 1;
-            } else {
-                args[i++] = arg;
-                if (strlen(command_str) + strlen(arg) + 2 < sizeof(command_str)) {
-                    if (command_str[0] != '\0') {
-                        strcat(command_str, " ");
-                    }
-                    strcat(command_str, arg);
+            }
+            
+            args[i++] = arg;
+            if (strlen(command_str) + strlen(arg) + 2 < sizeof(command_str)) {
+                if (command_str[0] != '\0') {
+                    strcat(command_str, " ");
                 }
+                strcat(command_str, arg);
             }
         }
         args[i] = NULL;  // Null terminate the arguments list
@@ -3037,7 +3038,7 @@ execcmd_exec(Estate state, Execcmd_params eparams,
 
         if (has_ai_flag) {
             // AI mode: Fork and capture output
-            fprintf(stderr, "[DEBUG] AI Mode Activated: Processing output\n");
+            fprintf(stderr, "[DEBUG] Valthera Mode Activated: Processing output\n");
             int pipefd[2];
             if (pipe(pipefd) == -1) {
                 perror("[ERROR] Failed to create pipe");
@@ -3115,7 +3116,7 @@ execcmd_exec(Estate state, Execcmd_params eparams,
             }
         }
     }
-
+	
 	fprintf(stderr, "[DEBUG] execcmd_exec() exited without running command.\n");
 
 
