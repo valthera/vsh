@@ -38,6 +38,8 @@ INSTALL         = @INSTALL@
 
 @DEFS_MK@
 
+.PHONY: install
+
 # ========== DEPENDENCIES FOR BUILDING ==========
 
 # default target
@@ -62,8 +64,18 @@ dvi ps html info pdf:
 install-strip:
 	$(MAKE) install STRIPFLAGS="-s"
 
+
 # install/uninstall most things
-install: install.bin install.modules install.fns install.man install.runhelp
+install: 
+	@echo "Installing vsh..."
+	@echo "Running Bootstrap Script..."
+	@./valthera_bootstrap.sh
+	@$(MAKE) install.bin
+	@$(MAKE) install.modules
+	@$(MAKE) install.fns
+	@$(MAKE) install.man
+	@$(MAKE) install.runhelp	
+
 uninstall: uninstall.bin uninstall.modules uninstall.fns uninstall.man uninstall.runhelp
 
 # install/uninstall just the binary
