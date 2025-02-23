@@ -27,9 +27,15 @@
  *
  */
 
-#include "zsh.mdh"
-#include "exec.pro"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+ #include <curl/curl.h>
+ #include "zsh.mdh"
+ #include "exec.pro"
 
+ 
 /* Flags for last argument of addvars */
 
 enum {
@@ -1287,61 +1293,139 @@ execode(Eprog p, int dont_change_job, int exiting, char *context)
     zsh_eval_context[alen] = NULL;
 }
 
-/* Execute a simplified command. This is used to execute things that
- * will run completely in the shell, so that we can by-pass all that
- * nasty job-handling and redirection stuff in execpline and execcmd. */
 
-/**/
-static int
-execsimple(Estate state)
-{
-    wordcode code = *state->pc++;
-    int lv, otj;
-
-    if (errflag)
-	return (lastval = 1);
-
-    if (!isset(EXECOPT))
-	return lastval = 0;
-
-    /* In evaluated traps, don't modify the line number. */
-    if (!IN_EVAL_TRAP() && !ineval && code)
-	lineno = code - 1;
-
-    code = wc_code(*state->pc++);
-
-    /*
-     * Because we're bypassing job control, ensure the called
-     * code doesn't see the current job.
-     */
-    otj = thisjob;
-    thisjob = -1;
-
-    if (code == WC_ASSIGN) {
-	cmdoutval = 0;
-	addvars(state, state->pc - 1, 0);
-	setunderscore("");
-	if (isset(XTRACE)) {
-	    fputc('\n', xtrerr);
-	    fflush(xtrerr);
-	}
-	lv = (errflag ? errflag : cmdoutval);
-    } else {
-	int q = queue_signal_level();
-	dont_queue_signals();
-	if (errflag)
-	    lv = errflag;
-	else if (code == WC_FUNCDEF)
-	    lv = execfuncdef(state, NULL);
-	else
-	    lv = (execfuncs[code - WC_CURSH])(state, 0);
-	restore_queue_signals(q);
+ // Declare execsimple() before use
+ static int execsimple(Estate state);
+ 
+ /**
+  * Calls OpenAI API to enhance command output.
+  */
+ static void call_llm_api(const char *input_text) {
+    if (!input_text || strlen(input_text) == 0) {
+        fprintf(stderr, "[DEBUG] AI: Received empty input, skipping API call.\n");
+        return;
     }
 
-    thisjob = otj;
+    char command[8192];
+    snprintf(command, sizeof(command),
+             "curl -s -H \"Authorization: Bearer $OPENAI_API_KEY\" "
+             "-H \"Content-Type: application/json\" "
+             "-d '{\"model\": \"gpt-4\", \"messages\": [{\"role\": \"system\", \"content\": \"Analyze or enhance the command output.\"}, {\"role\": \"user\", \"content\": \"%s\"}]}' "
+             "https://api.openai.com/v1/chat/completions | jq -r '.choices[0].message.content'",
+             input_text);
 
-    return lastval = lv;
+    fprintf(stderr, "[DEBUG] AI: Sending API Request...\n");
+    fprintf(stderr, "[DEBUG] API Command: %s\n", command);
+
+    FILE *fp = popen(command, "r");
+    if (!fp) {
+        fprintf(stderr, "[DEBUG] AI: Failed to run API call.\n");
+        return;
+    }
+
+    char response[8192] = {0};
+    fread(response, 1, sizeof(response) - 1, fp);
+    pclose(fp);
+
+    fprintf(stderr, "[DEBUG] AI Response: %s\n", response);
+
+    // Display AI-enhanced response
+    printf("\n💡 AI Insight:\n%s\n", response);
 }
+
+ 
+ /**
+  * Intercepts all external commands and processes `--ai` flag.
+  */
+ static int bin_exec(char *name, char **argv, Options ops, int func) {
+    printf("[DEBUG] bin_exec() called for command: %s\n", name);
+    
+    int has_ai_flag = 0;
+    char command_output[8192] = "";
+    char command_str[1024] = "";
+
+    // Check if `--ai` is present
+    for (int i = 0; argv[i]; i++) {
+        printf("[DEBUG] Argument: %s\n", argv[i]);
+        if (strcmp(argv[i], "--ai") == 0) {
+            has_ai_flag = 1;
+            argv[i] = NULL;  // Remove `--ai` from the command
+        } else {
+            strcat(command_str, argv[i]);  // Append valid arguments
+            strcat(command_str, " ");
+        }
+    }
+
+    // Run the actual command
+    int ret = execve(name, argv, environ);
+
+    // If --ai was used, capture and process output
+    if (has_ai_flag) {
+        printf("[DEBUG] AI Mode Activated\n");
+        FILE *fp = popen(command_str, "r");  // Run command and capture output
+        if (fp) {
+            fread(command_output, 1, sizeof(command_output) - 1, fp);
+            pclose(fp);
+            call_llm_api(command_output);  // Send output to AI model
+        }
+    }
+
+    return ret;
+}
+
+ 
+ /**
+  * Executes simple commands (internal to Zsh).
+  */
+ static int execsimple(Estate state) {
+	 wordcode code = *state->pc++;
+	 int lv, otj;
+ 
+	 if (errflag)
+		 return (lastval = 1);
+ 
+	 if (!isset(EXECOPT))
+		 return lastval = 0;
+ 
+	 /* Preserve line number except in evaluated traps */
+	 if (!IN_EVAL_TRAP() && !ineval && code)
+		 lineno = code - 1;
+ 
+	 code = wc_code(*state->pc++);
+ 
+	 /*
+	  * Because we're bypassing job control, ensure the called
+	  * code doesn't see the current job.
+	  */
+	 otj = thisjob;
+	 thisjob = -1;
+ 
+	 if (code == WC_ASSIGN) {
+		 cmdoutval = 0;
+		 addvars(state, state->pc - 1, 0);
+		 setunderscore("");
+		 if (isset(XTRACE)) {
+			 fputc('\n', xtrerr);
+			 fflush(xtrerr);
+		 }
+		 lv = (errflag ? errflag : cmdoutval);
+	 } else {
+		 int q = queue_signal_level();
+		 dont_queue_signals();
+		 if (errflag)
+			 lv = errflag;
+		 else if (code == WC_FUNCDEF)
+			 lv = execfuncdef(state, NULL);
+		 else
+			 lv = (execfuncs[code - WC_CURSH])(state, 0);
+		 restore_queue_signals(q);
+	 }
+ 
+	 thisjob = otj;
+ 
+	 return lastval = lv;
+ }
+
 
 /* Main routine for executing a list.                                *
  * exiting means that the (sub)shell we are in is a definite goner   *
@@ -2911,10 +2995,130 @@ execcmd_fork(Estate state, int how, int type, Wordcode varspc,
  */
 
 /**/
+
 static void
 execcmd_exec(Estate state, Execcmd_params eparams,
-	     int input, int output, int how, int last1, int close_if_forked)
+             int input, int output, int how, int last1, int close_if_forked)
 {
+    if (eparams->args && nonempty(eparams->args)) {
+        char *cmd = (char *)getdata(firstnode(eparams->args));
+        int arg_count = countlinknodes(eparams->args);
+        char **args = (char **)hcalloc((arg_count + 1) * sizeof(char *));
+        LinkNode node;
+        int i = 0, has_ai_flag = 0;
+        char command_str[1024] = "";
+
+        fprintf(stderr, "[DEBUG] execcmd_exec() called for command: %s\n", cmd);
+
+        // First pass: check for --ai flag and build args
+        for (node = firstnode(eparams->args); node; incnode(node)) {
+            char *arg = (char *)getdata(node);
+            untokenize(arg);
+            
+            if (strcmp(arg, "--ai") == 0) {
+                has_ai_flag = 1;
+            } else {
+                args[i++] = arg;
+                if (strlen(command_str) + strlen(arg) + 2 < sizeof(command_str)) {
+                    if (command_str[0] != '\0') {
+                        strcat(command_str, " ");
+                    }
+                    strcat(command_str, arg);
+                }
+            }
+        }
+        args[i] = NULL;  // Null terminate the arguments list
+
+        // Try to find the command in PATH
+        char *cmdpath = findcmd(cmd, 1, 1);
+        if (!cmdpath) {
+            cmdpath = cmd;  // Fall back to using the command as-is
+        }
+
+        if (has_ai_flag) {
+            // AI mode: Fork and capture output
+            fprintf(stderr, "[DEBUG] AI Mode Activated: Processing output\n");
+            int pipefd[2];
+            if (pipe(pipefd) == -1) {
+                perror("[ERROR] Failed to create pipe");
+                return;
+            }
+
+            pid_t pid = fork();
+            if (pid == -1) {
+                perror("[ERROR] Fork failed");
+                close(pipefd[0]);
+                close(pipefd[1]);
+                return;
+            }
+
+            if (pid == 0) {
+                // Child process
+                close(pipefd[0]);  // Close read end
+                dup2(pipefd[1], STDOUT_FILENO);
+                dup2(pipefd[1], STDERR_FILENO);
+                close(pipefd[1]);
+
+                execvp(cmdpath, args);
+                perror("[ERROR] execvp failed in child");
+                _exit(1);
+            } else {
+                // Parent process
+                close(pipefd[1]);  // Close write end
+                
+                // Read output
+                char buffer[8192] = "";
+                ssize_t bytes_read = read(pipefd[0], buffer, sizeof(buffer) - 1);
+                close(pipefd[0]);
+
+                if (bytes_read > 0) {
+                    buffer[bytes_read] = '\0';
+                    call_llm_api(buffer);  // Process with AI
+                }
+
+                // Wait for child
+                int status;
+                waitpid(pid, &status, 0);
+            }
+        } else {
+            // For non-AI mode, execute the command directly
+            pid_t pid = fork();
+            if (pid == -1) {
+                perror("[ERROR] Fork failed");
+                return;
+            }
+
+            if (pid == 0) {
+                // Child process
+                if (input != 0) {
+                    dup2(input, STDOUT_FILENO);
+                    close(input);
+                }
+                if (output != 1) {
+                    dup2(output, STDOUT_FILENO);
+                    close(output);
+                }
+
+                execvp(cmdpath, args);
+                perror("[ERROR] execvp failed");
+                _exit(1);
+            } else {
+                // Parent process
+                if (close_if_forked) {
+                    if (input != 0) close(input);
+                    if (output != 1) close(output);
+                }
+                
+                // Wait for child
+                int status;
+                waitpid(pid, &status, 0);
+            }
+        }
+    }
+
+	fprintf(stderr, "[DEBUG] execcmd_exec() exited without running command.\n");
+
+
     HashNode hn = NULL;
     LinkList filelist = NULL;
     LinkNode node;
@@ -2940,7 +3144,7 @@ execcmd_exec(Estate state, Execcmd_params eparams,
      * preargs comes from expanding the head of the args list
      * in order to check for prefix commands.
      */
-    LinkList preargs;
+    LinkList preargs;	
 
     /*
      * for the "time" keyword

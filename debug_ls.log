@@ -1,0 +1,2 @@
+ls: unrecognized option `--ai'
+usage: ls [-@ABCFGHILOPRSTUWXabcdefghiklmnopqrstuvwxy1%,] [--color=when] [-D format] [file ...]
